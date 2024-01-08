@@ -1,6 +1,7 @@
 gcloud services enable datamigration.googleapis.com
 gcloud services enable servicenetworking.googleapis.com
 
+# TASK 1
 #--------------------------------------------------------------------------------
 sudo apt install postgresql-13-pglogical
 sudo su - postgres -c "gsutil cp gs://cloud-training/gsp918/pg_hba_append.conf ."
@@ -69,6 +70,10 @@ GRANT SELECT ON public.products TO $PG_USER;
 GRANT SELECT ON public.users TO $PG_USER;
 EOF
 
+cat << EOF | psql orders
+ALTER TABLE public.inventory_items ADD PRIMARY KEY(id);
+EOF
+
 cat << EOF | psql gmemegen_db
 GRANT USAGE ON SCHEMA pglogical TO $PG_USER;
 GRANT ALL ON SCHEMA pglogical TO $PG_USER;
@@ -106,20 +111,48 @@ EOF
 #--------------------------------------------------------------------------------
 export SRC_REGION=
 export REGION=
-gcloud database-migration connection-profiles create postgresql GSP314 \
-    --region=$SRC_REGION \
+export INSTANCE=
+gcloud sql instances create ${INSTANCE} \
+    --region=$REGION \
+    --database-version=POSTGRES_13 \
+    --cpu=1 \
+    --memory=4GB \
+    --storage-size=10GB \
+    --storage-type=SSD \
+    --root-password='supersecret!'
+
+gcloud database-migration connection-profiles create postgresql GSP314-src \
+    --region=$REGION \
     --host=$HOST \
     --port=5432 \
     --username=$PG_USER \
     --password=$PG_PASS
 
+gcloud database-migration connection-profiles create postgresql GSP314-dst \
+    --region=$SRC_REGION \
+    --cloudsql-instance==${INSTANCE} \
+    --username=root \
+    --password='supersecret!'
+
 gcloud database-migration migration-jobs create GSP314 \
     --region=$REGION \
-    --source=GSP314 \
+    --destination=GSP314-dst \
+    --source=GSP314-src \
     --type=CONTINUOUS \
     --peer-vpc=default \
 
+# TASK 2
+#--------------------------------------------------------------------------------
+export ANTERN_EDITOR=
+export CYMBAL_OWNER=
+export CYMBAL_EDITOR=
+gcloud projects add-iam-policy-binding --member=user:${ANTERN_EDITOR} --role=roles/cloudsql.instanceUser
+gcloud projects add-iam-policy-binding --member=user:${CYMBAL_OWNER} --role=roles/cloudsql.admin
+gcloud projects add-iam-policy-binding --member=user:${CYMBAL_EDITOR} --role=roles/cloud.editor
+gcloud projects remove-iam-policy-binding --member=user:${CYMBAL_EDITOR} --role=roles/cloud.viewer
 
+
+# TASK 3
 #--------------------------------------------------------------------------------
 export NETWORK_NAME=
 export SUBNET1_NAME=
@@ -156,3 +189,15 @@ gcloud compute firewall-rules create $FIREWALL_RULE3 \
   --direction=ingress \
   --network=$NETWORK_NAME \
   --priority=65535
+
+
+# TASK 3
+#--------------------------------------------------------------------------------
+export SINK_NAME=
+export INCLUSION_FILTER=
+bq --location=US mk \
+    --dataset gke_app_errors_sink
+gcloud logging sinks create ${SINK_NAME} bigquery.googleapis.com/projects/${PROJECT}/datasets/gke_app_errors_sink \
+    --log-filter='resource.type="${INCLUSION_FILTER}" AND severity=ERROR'
+gcloud projects add-iam-policy-binding --member=user:${ANTERN_EDITOR} --role=roles/bigquery.dataViewer
+gcloud projects add-iam-policy-binding --member=user:${ANTERN_OWNER} --role=roles/bigquery.admin
