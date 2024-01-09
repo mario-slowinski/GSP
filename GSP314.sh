@@ -12,9 +12,8 @@ sudo systemctl restart postgresql@13-main
 sudo su - postgres
 psql --command="CREATE EXTENSION pglogical;" postgres
 psql --command="CREATE EXTENSION pglogical;" orders
-psql --command="CREATE EXTENSION pglogical;" gmemegen_db
 
-export PG_USER='migration_admin'
+export PG_USER='replication_admin'
 export PG_PASS='DMS_1s_cool!'
 
 cat << EOF | psql postgres
@@ -74,31 +73,6 @@ cat << EOF | psql orders
 ALTER TABLE public.inventory_items ADD PRIMARY KEY(id);
 EOF
 
-cat << EOF | psql gmemegen_db
-GRANT USAGE ON SCHEMA pglogical TO $PG_USER;
-GRANT ALL ON SCHEMA pglogical TO $PG_USER;
-
-GRANT SELECT ON pglogical.tables TO $PG_USER;
-GRANT SELECT ON pglogical.depend TO $PG_USER;
-GRANT SELECT ON pglogical.local_node TO $PG_USER;
-GRANT SELECT ON pglogical.local_sync_status TO $PG_USER;
-GRANT SELECT ON pglogical.node TO $PG_USER;
-GRANT SELECT ON pglogical.node_interface TO $PG_USER;
-GRANT SELECT ON pglogical.queue TO $PG_USER;
-GRANT SELECT ON pglogical.replication_set TO $PG_USER;
-GRANT SELECT ON pglogical.replication_set_seq TO $PG_USER;
-GRANT SELECT ON pglogical.replication_set_table TO $PG_USER;
-GRANT SELECT ON pglogical.sequence_state TO $PG_USER;
-GRANT SELECT ON pglogical.subscription TO $PG_USER;
-EOF
-
-cat << EOF | psql gmemegen_db
-GRANT USAGE ON SCHEMA public TO $PG_USER;
-GRANT ALL ON SCHEMA public TO $PG_USER;
-
-GRANT SELECT ON public.meme TO $PG_USER;
-EOF
-
 cat << EOF | psql orders
 ALTER TABLE public.distribution_centers OWNER TO $PG_USER;
 ALTER TABLE public.inventory_items OWNER TO $PG_USER;
@@ -109,61 +83,42 @@ ALTER TABLE public.users OWNER TO $PG_USER;
 EOF
 
 #--------------------------------------------------------------------------------
-export SRC_REGION=
-export REGION=
-export INSTANCE=
-gcloud sql instances create ${INSTANCE} \
-    --region=$REGION \
-    --database-version=POSTGRES_13 \
-    --cpu=1 \
-    --memory=4GB \
-    --storage-size=10GB \
-    --storage-type=SSD \
-    --root-password='supersecret!'
+export PROJECT_ID=`gcloud config list --format 'value(core.project)'`
+export INSTANCE=b2b-postgres86
+export SRC_REGION=us-central1
+export SRC_IP=10.128.0.2
+export DST_IP=10.106.176.3
+export REGION=us-central1
+# Can't create demoted instance with gcloud
+#gcloud sql instances create ${INSTANCE} --region=$REGION --database-version=POSTGRES_13 --cpu=1 --memory=3.75GB --storage-size=10GB --storage-type=SSD --root-password='supersecret!'
+gcloud database-migration connection-profiles create postgresql src --region=$SRC_REGION --host=$SRC_IP --port=5432 --username=$PG_USER --password=$PG_PASS
+gcloud database-migration connection-profiles create postgresql dst --region=$REGION --host=${DST_IP} --port=5432 --username=root --password='supersecret!' --cloudsql-instance=${INSTANCE}
 
-gcloud database-migration connection-profiles create postgresql GSP314-src \
-    --region=$REGION \
-    --host=$HOST \
-    --port=5432 \
-    --username=$PG_USER \
-    --password=$PG_PASS
-
-gcloud database-migration connection-profiles create postgresql GSP314-dst \
-    --region=$SRC_REGION \
-    --cloudsql-instance==${INSTANCE} \
-    --username=root \
-    --password='supersecret!'
-
-gcloud database-migration migration-jobs create GSP314 \
-    --region=$REGION \
-    --destination=GSP314-dst \
-    --source=GSP314-src \
-    --type=CONTINUOUS \
-    --peer-vpc=default \
+gcloud database-migration migration-jobs create gsp314 --region=$REGION --destination=dst --source=src --type=CONTINUOUS --peer-vpc=default
 
 # TASK 2
 #--------------------------------------------------------------------------------
-export ANTERN_EDITOR=
-export CYMBAL_OWNER=
-export CYMBAL_EDITOR=
-gcloud projects add-iam-policy-binding --member=user:${ANTERN_EDITOR} --role=roles/cloudsql.instanceUser
-gcloud projects add-iam-policy-binding --member=user:${CYMBAL_OWNER} --role=roles/cloudsql.admin
-gcloud projects add-iam-policy-binding --member=user:${CYMBAL_EDITOR} --role=roles/cloud.editor
-gcloud projects remove-iam-policy-binding --member=user:${CYMBAL_EDITOR} --role=roles/cloud.viewer
+export ANTERN_EDITOR=student-00-96ed77f6d9ab@qwiklabs.net
+export CYMBAL_OWNER=student-00-89e5785a511f@qwiklabs.net
+export CYMBAL_EDITOR=student-04-904c9253437c@qwiklabs.net
+gcloud projects add-iam-policy-binding ${PROJECT_ID} --member=user:${ANTERN_EDITOR} --role=roles/cloudsql.instanceUser
+gcloud projects add-iam-policy-binding ${PROJECT_ID} --member=user:${CYMBAL_OWNER} --role=roles/cloudsql.admin
+gcloud projects add-iam-policy-binding ${PROJECT_ID} --member=user:${CYMBAL_EDITOR} --role=roles/cloud.editor
+gcloud projects remove-iam-policy-binding ${PROJECT_ID} --member=user:${CYMBAL_EDITOR} --role=roles/cloud.viewer
 
 
 # TASK 3
 #--------------------------------------------------------------------------------
-export NETWORK_NAME=
-export SUBNET1_NAME=
-export SUBNET1_REGION=
-export SUBNET1_RANGE=
-export SUBNET2_NAME=
-export SUBNET2_REGION=
-export SUBNET2_RANGE=
-export FIREWALL_RULE1=
-export FIREWALL_RULE2=
-export FIREWALL_RULE3=
+export NETWORK_NAME=vpc-network-4jwq
+export SUBNET1_NAME=subnet-a-4e7u
+export SUBNET1_REGION=asia-east1
+export SUBNET1_RANGE=10.10.10.0/24
+export SUBNET2_NAME=subnet-b-ktrr
+export SUBNET2_REGION=us-central1
+export SUBNET2_RANGE=10.10.20.0/24
+export FIREWALL_RULE1=lixn-firewall-ssh
+export FIREWALL_RULE2=sqwd-firewall-rdp
+export FIREWALL_RULE3=aqug-firewall-icmp
 
 gcloud compute networks create $NETWORK_NAME --subnet-mode=custom
 gcloud compute networks subnets create $SUBNET1_NAME --network=$NETWORK_NAME --range=$SUBNET1_RANGE --region=$SUBNET1_REGION
